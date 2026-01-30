@@ -1,16 +1,21 @@
 from pathlib import Path
+import sys
 from ultralytics import YOLO
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
-DATA_YAML = ROOT / "02_processed" / "yolo_dataset_ms8_v1" / "data.yaml"
-PROJECT_DIR = ROOT / "03_models" / "runs"
+from paths import PROCESSED_DIR, RUNS_DIR, WEIGHTS_DIR
+
+DATA_YAML = PROCESSED_DIR / "yolo_dataset_ms8_v1" / "data.yaml"
+PROJECT_DIR = RUNS_DIR / "training_runs"
 EXP_NAME = "yolo11n_wv3_120e_v1"
 
 def main():
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = YOLO("yolo11n.pt")
+    model = YOLO(str(WEIGHTS_DIR / "yolo11n.pt"))
 
     model.train(
         data=str(DATA_YAML),

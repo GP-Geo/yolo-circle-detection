@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import json
 import math
 import argparse
@@ -82,12 +83,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--meta",
-        default="02_processed/yolo_dataset_ms8_v1/dataset_meta.json",
+        default="data/processed/yolo_dataset_ms8_v1/dataset_meta.json",
         help="Dataset metadata json (MS8 dataset recommended).",
     )
     parser.add_argument(
         "--out",
-        default="04_inference/tiles_full",
+        default="outputs/inference/tiles_full",
         help="Output root folder. Will create images_ms8/ and images_rgb/ inside it.",
     )
     parser.add_argument(
@@ -108,6 +109,12 @@ def main() -> None:
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.append(str(root))
+
+    from paths import PROJECT_ROOT
+
+    root = PROJECT_ROOT
     meta_path = (root / args.meta).resolve()
     out_root = (root / args.out).resolve()
 

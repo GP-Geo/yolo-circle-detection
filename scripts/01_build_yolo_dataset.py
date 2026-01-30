@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import json
 import math
 import random
@@ -110,12 +111,18 @@ def write_ms_tiff_multipage(path: Path, chw_uint8: np.ndarray) -> None:
     )
 
 
-def main() -> None:
-    root = Path(__file__).resolve().parents[1]  # YOLO_detections
-    raster_path = root / "00_raw" / "raster" / "wv3.tif"
-    gpkg_path = root / "00_raw" / "vectors" / "labeling_WV3.gpkg"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
-    out_root = root / "02_processed" / "yolo_dataset_ms8_v1"
+from paths import RAW_DIR, PROCESSED_DIR
+
+
+def main() -> None:
+    raster_path = RAW_DIR / "raster" / "wv3.tif"
+    gpkg_path = RAW_DIR / "vectors" / "labeling_WV3.gpkg"
+
+    out_root = PROCESSED_DIR / "yolo_dataset_ms8_v1"
 
     # Model input tiles (8-band multi-page TIFF)
     for split in ["train", "val", "test"]:

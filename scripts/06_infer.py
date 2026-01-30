@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import json
 from pathlib import Path
+import sys
 import argparse
 
 import numpy as np
@@ -80,8 +81,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run YOLO inference on tiles and export global-pixel predictions CSV. Supports 8-band TIFF by reading with rasterio."
     )
-    parser.add_argument("--model", required=True, help="Weights path, e.g. 03_models/runs/yolo_wv3_v1/weights/best.pt")
-    parser.add_argument("--source", required=True, help="Tiles folder, e.g. 04_inference/tiles_full/images_ms")
+    parser.add_argument("--model", required=True, help="Weights path, e.g. models/runs/training_runs/yolo_wv3_v1/weights/best.pt")
+    parser.add_argument("--source", required=True, help="Tiles folder, e.g. outputs/inference/tiles_full/images_ms8")
     parser.add_argument("--meta", required=True, help="Metadata json with tile_size and stride (dataset_meta.json or tiles_meta.json)")
     parser.add_argument("--out", required=True, help="Output folder")
 
@@ -91,7 +92,13 @@ def main() -> None:
     parser.add_argument("--device", default="auto", help="auto | mps | cpu")
     args = parser.parse_args()
 
-    root = Path(__file__).resolve().parents[1]  # YOLO_detections
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.append(str(root))
+
+    from paths import PROJECT_ROOT
+
+    root = PROJECT_ROOT
     model_path = resolve_path(root, args.model)
     source_dir = resolve_path(root, args.source)
     meta_path = resolve_path(root, args.meta)

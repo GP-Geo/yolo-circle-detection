@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import argparse
 
 import numpy as np
@@ -154,8 +155,8 @@ def main() -> None:
         description="Merge tile predictions with NMS + nested suppression (prefer outer), export GeoPackage."
     )
     parser.add_argument("--pred_csv", required=True, help="predictions_tiles.csv from 06_infer.py")
-    parser.add_argument("--meta", default="02_processed/yolo_dataset_v1/dataset_meta.json", help="Dataset metadata json")
-    parser.add_argument("--out", required=True, help="Output folder, e.g. 04_inference/merged_predictions/yolo11n_wv3_v1_full")
+    parser.add_argument("--meta", default="data/processed/yolo_dataset_v1/dataset_meta.json", help="Dataset metadata json")
+    parser.add_argument("--out", required=True, help="Output folder, e.g. outputs/predictions/merged/yolo11n_wv3_v1_full")
 
     parser.add_argument("--min_conf", type=float, default=0.0, help="Drop predictions below this confidence before merging")
     parser.add_argument("--nms_iou", type=float, default=0.30, help="NMS IoU threshold (global pixel space)")
@@ -165,6 +166,12 @@ def main() -> None:
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.append(str(root))
+
+    from paths import PROJECT_ROOT
+
+    root = PROJECT_ROOT
     pred_csv = resolve_path(root, args.pred_csv)
     meta_path = resolve_path(root, args.meta)
     out_dir = resolve_path(root, args.out)

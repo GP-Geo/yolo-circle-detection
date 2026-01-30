@@ -13,6 +13,8 @@ outputs/
 runs/
 models/
 weights/
+reports/
+logs/
 *.pt
 *.onnx
 
