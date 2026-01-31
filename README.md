@@ -711,10 +711,4 @@ Key parameters to tune in `scripts/04_train.py`:
 - **Rasterio**: [Rasterio Documentation](https://rasterio.readthedocs.io/)
 - **GeoPackage**: [OGC GeoPackage Specification](https://www.geopackage.org/)
 
-## License
 
-[Add your license information here]
-
-## Contact
-
-[Add contact information or project maintainers here]
