@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
@@ -13,10 +14,14 @@ from rasterio.transform import xy as txy
 import geopandas as gpd
 from shapely.geometry import box as sbox
 
+# Add project root to path for imports
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
-def resolve_path(root: Path, p: str) -> Path:
-    pp = Path(p)
-    return pp if pp.is_absolute() else (root / pp).resolve()
+from utils import resolve_path, setup_logger
+
+logger = setup_logger(__name__)
 
 
 def _normalize_boxes_xyxy(df: pd.DataFrame) -> np.ndarray:
@@ -169,57 +174,16 @@ def px_box_to_map_polygon(transform, x1, y1, x2, y2):
     return sbox(minx, miny, maxx, maxy)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Export YOLO predictions CSV to GeoPackage with robust 2-pass dedup.")
-    ap.add_argument("--pred", required=True, help="predictions_tiles.csv from 06_infer.py")
-    ap.add_argument("--tiles_meta", required=True, help="tiles_meta.json from 05_make_inference_tiles.py")
-    ap.add_argument("--out_gpkg", required=True, help="Output GeoPackage path")
-    ap.add_argument("--layer", required=True, help="Layer name inside the GeoPackage")
-
-    ap.add_argument("--min_conf", type=float, default=0.25, help="Keep detections with conf >= this")
-
-    ap.add_argument("--dedup", action="store_true", help="Enable deduplication")
-    ap.add_argument("--dedup_by_class", action="store_true", help="Dedup per class_id (recommended)")
-
-    # Pass A - cut boxes
-    ap.add_argument("--contain_thr", type=float, default=0.90, help="Drop small box if covered by >= this fraction")
-    ap.add_argument("--contain_tol_px", type=float, default=3.0, help="Tolerance for near-containment in pixels")
-
-    # Pass B - true duplicates
-    ap.add_argument("--dup_iou", type=float, default=0.90, help="If IoU >= this, keep higher score only")
-
-    ap.add_argument("--crs_override", default="", help="Override CRS (e.g. EPSG:32737). If empty, use raster CRS.")
-    args = ap.parse_args()
-
+def process_single_image(df, raster_path, out_gpkg_base, args, logger, input_id=None):
+    """Process a single image's predictions with deduplication and export to GeoPackage."""
     root = Path(__file__).resolve().parents[1]
-    pred_csv = resolve_path(root, args.pred)
-    tiles_meta_path = resolve_path(root, args.tiles_meta)
-    out_gpkg = resolve_path(root, args.out_gpkg)
-
-    if not pred_csv.exists():
-        raise FileNotFoundError(f"Pred CSV not found: {pred_csv}")
-    if not tiles_meta_path.exists():
-        raise FileNotFoundError(f"tiles_meta.json not found: {tiles_meta_path}")
-
-    tiles_meta = json.loads(tiles_meta_path.read_text(encoding="utf-8"))
-    raster_path = Path(tiles_meta["raster"])
-    if not raster_path.is_absolute():
-        raster_path = (root / raster_path).resolve()
-    if not raster_path.exists():
-        raise FileNotFoundError(f"Raster referenced in tiles_meta.json not found: {raster_path}")
-
-    df = pd.read_csv(pred_csv)
-    required = {"x1", "y1", "x2", "y2", "conf"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"CSV missing columns: {sorted(missing)}")
 
     n0 = len(df)
     df = df[df["conf"] >= float(args.min_conf)].copy()
     n1 = len(df)
 
     if df.empty:
-        print("No detections after min_conf. Exiting.")
+        logger.warning(f"No detections after min_conf filter for {input_id or 'image'}. Skipping.")
         return
 
     n2 = n1
@@ -263,28 +227,149 @@ def main() -> None:
     ]
     gdf = gpd.GeoDataFrame(df.copy(), geometry=geoms, crs=crs_out)
 
+    # Add input_id suffix to filename if processing multiple images
+    out_gpkg = Path(out_gpkg_base)
+    if input_id:
+        # Insert input_id before the .gpkg extension
+        out_gpkg = out_gpkg.parent / f"{out_gpkg.stem}_{input_id}{out_gpkg.suffix}"
+
     out_gpkg.parent.mkdir(parents=True, exist_ok=True)
     gdf.to_file(out_gpkg, layer=args.layer, driver="GPKG")
 
-    print("DONE")
-    print("pred_csv:", pred_csv)
-    print("tiles_meta:", tiles_meta_path)
-    print("raster:", raster_path)
-    print("out_gpkg:", out_gpkg)
-    print("layer:", args.layer)
-    print("min_conf:", args.min_conf, f"rows: {n0} -> {n1}")
+    logger.info("=" * 80)
+    logger.info(f"Export completed successfully for {input_id or 'image'}!")
+    logger.info("=" * 80)
+    logger.info(f"Raster: {raster_path}")
+    logger.info(f"Output GeoPackage: {out_gpkg}")
+    logger.info(f"Layer: {args.layer}")
+    logger.info(f"Min confidence: {args.min_conf} (rows: {n0} -> {n1})")
     if args.dedup:
-        print(
-            "dedup: enabled",
-            "by_class:", bool(args.dedup_by_class and "class_id" in df.columns),
-            "passA_contain_thr:", args.contain_thr,
-            "passA_contain_tol_px:", args.contain_tol_px,
-            "passB_dup_iou:", args.dup_iou,
+        logger.info(
+            f"Dedup: enabled | by_class: {bool(args.dedup_by_class and 'class_id' in df.columns)} | "
+            f"contain_thr: {args.contain_thr} | contain_tol_px: {args.contain_tol_px} | dup_iou: {args.dup_iou}"
         )
-        print("rows_after_dedup:", len(gdf))
+        logger.info(f"Rows after dedup: {len(gdf)}")
     else:
-        print("dedup: disabled")
-        print("final_rows:", len(gdf))
+        logger.info("Dedup: disabled")
+        logger.info(f"Final rows: {len(gdf)}")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Export YOLO predictions CSV to GeoPackage with robust 2-pass dedup.")
+    ap.add_argument("--pred", required=True, help="predictions_tiles.csv from 06_infer.py")
+    ap.add_argument("--tiles_meta", required=True, help="tiles_meta.json from 05_make_inference_tiles.py")
+    ap.add_argument("--out_gpkg", required=True, help="Output GeoPackage path")
+    ap.add_argument("--layer", required=True, help="Layer name inside the GeoPackage")
+    ap.add_argument(
+        "--input_id",
+        default="",
+        help="If tiles_meta has multiple inputs, set this to choose the raster and filter tiles (e.g. image1).",
+    )
+
+    ap.add_argument("--min_conf", type=float, default=0.25, help="Keep detections with conf >= this")
+
+    ap.add_argument("--dedup", action="store_true", help="Enable deduplication")
+    ap.add_argument("--dedup_by_class", action="store_true", help="Dedup per class_id (recommended)")
+
+    # Pass A - cut boxes
+    ap.add_argument("--contain_thr", type=float, default=0.90, help="Drop small box if covered by >= this fraction")
+    ap.add_argument("--contain_tol_px", type=float, default=3.0, help="Tolerance for near-containment in pixels")
+
+    # Pass B - true duplicates
+    ap.add_argument("--dup_iou", type=float, default=0.90, help="If IoU >= this, keep higher score only")
+
+    ap.add_argument("--crs_override", default="", help="Override CRS (e.g. EPSG:32737). If empty, use raster CRS.")
+    args = ap.parse_args()
+
+    root = Path(__file__).resolve().parents[1]
+    pred_csv = resolve_path(root, args.pred)
+    tiles_meta_path = resolve_path(root, args.tiles_meta)
+    out_gpkg = resolve_path(root, args.out_gpkg)
+
+    if not pred_csv.exists():
+        raise FileNotFoundError(f"Pred CSV not found: {pred_csv}")
+    if not tiles_meta_path.exists():
+        raise FileNotFoundError(f"tiles_meta.json not found: {tiles_meta_path}")
+
+    tiles_meta = json.loads(tiles_meta_path.read_text(encoding="utf-8"))
+
+    df = pd.read_csv(pred_csv)
+    required = {"x1", "y1", "x2", "y2", "conf"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV missing columns: {sorted(missing)}")
+
+    raster_path = None
+    if "raster" in tiles_meta:
+        raster_path = Path(tiles_meta["raster"])
+        if not raster_path.is_absolute():
+            raster_path = (root / raster_path).resolve()
+        # Process single raster
+        logger.info(f"Predictions CSV: {pred_csv}")
+        logger.info(f"Tiles metadata: {tiles_meta_path}")
+        process_single_image(df, raster_path, out_gpkg, args, logger, None)
+    else:
+        inputs = tiles_meta.get("inputs", [])
+        if not inputs:
+            raise ValueError("tiles_meta.json must include 'raster' or 'inputs'.")
+
+        input_id = args.input_id.strip()
+        if not input_id:
+            prefixes = set()
+            for name in df["tile"].dropna().astype(str).tolist():
+                if name.startswith("tile_") and "_r" in name:
+                    prefixes.add(name.split("_r")[0].replace("tile_", ""))
+            if len(prefixes) == 1:
+                input_id = prefixes.pop()
+            elif len(prefixes) > 1:
+                # Process all input prefixes
+                logger.info(f"Predictions CSV: {pred_csv}")
+                logger.info(f"Tiles metadata: {tiles_meta_path}")
+                logger.info(f"Found {len(prefixes)} input images: {sorted(prefixes)}")
+                logger.info("Processing all images...")
+                for prefix in sorted(prefixes):
+                    logger.info("=" * 80)
+                    logger.info(f"Processing input: {prefix}")
+                    logger.info("=" * 80)
+                    df_subset = df[df["tile"].astype(str).str.startswith(f"tile_{prefix}_")].copy()
+                    if df_subset.empty:
+                        logger.warning(f"No predictions found for {prefix}, skipping.")
+                        continue
+
+                    match = [i for i in inputs if i.get("id") == prefix]
+                    if not match:
+                        logger.warning(f"input_id not found in tiles_meta inputs: {prefix}, skipping.")
+                        continue
+                    raster_path = Path(match[0]["raster"])
+                    if not raster_path.is_absolute():
+                        raster_path = (root / raster_path).resolve()
+
+                    if not raster_path.exists():
+                        logger.warning(f"Raster not found: {raster_path}, skipping.")
+                        continue
+
+                    process_single_image(df_subset, raster_path, out_gpkg, args, logger, prefix)
+                return
+            else:
+                raise ValueError("Could not infer input_id from CSV. Use --input_id.")
+
+        df = df[df["tile"].astype(str).str.startswith(f"tile_{input_id}_")].copy()
+        if df.empty:
+            raise ValueError(f"No predictions for input_id '{input_id}' in CSV.")
+
+        match = [i for i in inputs if i.get("id") == input_id]
+        if not match:
+            raise ValueError(f"input_id not found in tiles_meta inputs: {input_id}")
+        raster_path = Path(match[0]["raster"])
+        if not raster_path.is_absolute():
+            raster_path = (root / raster_path).resolve()
+
+        if not raster_path.exists():
+            raise FileNotFoundError(f"Raster referenced in tiles_meta.json not found: {raster_path}")
+
+        logger.info(f"Predictions CSV: {pred_csv}")
+        logger.info(f"Tiles metadata: {tiles_meta_path}")
+        process_single_image(df, raster_path, out_gpkg, args, logger, input_id)
 
 
 if __name__ == "__main__":

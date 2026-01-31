@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import cv2
 import numpy as np
 import pandas as pd
+
+# Add project root to path for imports
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+from utils import setup_logger
+
+logger = setup_logger(__name__)
 
 
 def clamp_box(x1, y1, x2, y2, w, h):
@@ -125,14 +135,14 @@ def main() -> None:
         cv2.imwrite(str(out_path), img)
         rendered += 1
 
-    print("DONE")
-    print("pred_csv:", pred_csv)
-    print("rgb_dir:", rgb_dir)
-    print("out_dir:", out_dir)
-    print("stride:", stride)
-    print("min_conf:", args.min_conf)
-    print("tiles_rendered:", rendered)
-    print("boxes_drawn:", total_boxes)
+    logger.info("Rendering completed successfully")
+    logger.info(f"Predictions CSV: {pred_csv}")
+    logger.info(f"RGB directory: {rgb_dir}")
+    logger.info(f"Output directory: {out_dir}")
+    logger.info(f"Stride: {stride}px")
+    logger.info(f"Minimum confidence: {args.min_conf}")
+    logger.info(f"Tiles rendered: {rendered}")
+    logger.info(f"Boxes drawn: {total_boxes}")
 
 
 if __name__ == "__main__":

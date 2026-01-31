@@ -12,10 +12,14 @@ import rasterio
 from shapely.geometry import box as sbox
 from rasterio.transform import xy as txy
 
+# Add utils to path for logging
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
-def resolve_path(root: Path, p: str) -> Path:
-    pp = Path(p)
-    return pp if pp.is_absolute() else (root / pp).resolve()
+from utils import setup_logger, resolve_path
+
+logger = setup_logger(__name__)
 
 
 def nms_xyxy(boxes: np.ndarray, scores: np.ndarray, iou_thresh: float) -> np.ndarray:
@@ -150,54 +154,15 @@ def px_box_to_map_polygon(transform, x1, y1, x2, y2):
     return sbox(minx, miny, maxx, maxy)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Merge tile predictions with NMS + nested suppression (prefer outer), export GeoPackage."
-    )
-    parser.add_argument("--pred_csv", required=True, help="predictions_tiles.csv from 06_infer.py")
-    parser.add_argument("--meta", default="data/processed/yolo_dataset_v1/dataset_meta.json", help="Dataset metadata json")
-    parser.add_argument("--out", required=True, help="Output folder, e.g. outputs/predictions/merged/yolo11n_wv3_v1_full")
-
-    parser.add_argument("--min_conf", type=float, default=0.0, help="Drop predictions below this confidence before merging")
-    parser.add_argument("--nms_iou", type=float, default=0.30, help="NMS IoU threshold (global pixel space)")
-    parser.add_argument("--coverage_thresh", type=float, default=0.85, help="Mostly-contained coverage threshold")
-    parser.add_argument("--contain_tol_px", type=float, default=3.0, help="Containment tolerance in pixels")
-    parser.add_argument("--score_margin", type=float, default=0.0, help="Keep inner if it is higher than outer by this margin")
-    args = parser.parse_args()
-
-    root = Path(__file__).resolve().parents[1]
-    if str(root) not in sys.path:
-        sys.path.append(str(root))
-
-    from paths import PROJECT_ROOT
-
-    root = PROJECT_ROOT
-    pred_csv = resolve_path(root, args.pred_csv)
-    meta_path = resolve_path(root, args.meta)
-    out_dir = resolve_path(root, args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    if not pred_csv.exists():
-        raise FileNotFoundError(f"pred_csv not found: {pred_csv}")
-    if not meta_path.exists():
-        raise FileNotFoundError(f"meta json not found: {meta_path}")
-
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    raster_path = Path(meta["raster"])
-    if not raster_path.is_absolute():
-        raster_path = (root / raster_path).resolve()
-
-    df = pd.read_csv(pred_csv)
-    if df.empty:
-        print("No predictions found. Exiting.")
-        return
-
+def process_single_image(df, raster_path, out_dir, args, logger, input_id=None):
+    """Process a single image's predictions with NMS and nested suppression."""
     original_n = len(df)
+    logger.info(f"Processing {original_n} predictions for {input_id or 'image'}")
 
     if args.min_conf > 0:
         df = df[df["conf"] >= args.min_conf].copy()
         if df.empty:
-            print("All predictions filtered out by min_conf. Exiting.")
+            logger.warning("All predictions filtered out by min_conf. Skipping.")
             return
 
     # 1) Global NMS per class_id
@@ -241,23 +206,150 @@ def main() -> None:
 
     gdf = gpd.GeoDataFrame(out_df.copy(), geometry=geoms, crs=crs)
 
-    out_gpkg = out_dir / "detections_merged.gpkg"
+    # Add input_id suffix to filename if processing multiple images
+    suffix = f"_{input_id}" if input_id else ""
+    out_gpkg = out_dir / f"detections_merged{suffix}.gpkg"
     gdf.to_file(out_gpkg, layer="detections", driver="GPKG")
 
-    out_csv = out_dir / "detections_merged.csv"
+    out_csv = out_dir / f"detections_merged{suffix}.csv"
     out_df.to_csv(out_csv, index=False)
 
-    print("DONE")
-    print("pred_csv:", pred_csv)
-    print("raster:", raster_path)
-    print("min_conf:", args.min_conf)
-    print("nms_iou:", args.nms_iou)
-    print("coverage_thresh:", args.coverage_thresh)
-    print("contain_tol_px:", args.contain_tol_px)
-    print("score_margin:", args.score_margin)
-    print("counts: original =", original_n, " after_nms =", after_nms_n, " final =", final_n)
-    print("gpkg:", out_gpkg)
-    print("csv:", out_csv)
+    logger.info("=" * 80)
+    logger.info(f"Merge & NMS completed successfully for {input_id or 'image'}!")
+    logger.info("=" * 80)
+    logger.info(f"Prediction counts:")
+    logger.info(f"  Original: {original_n}")
+    logger.info(f"  After NMS: {after_nms_n} ({100*(1-after_nms_n/original_n):.1f}% reduction)")
+    logger.info(f"  After nested suppression: {final_n} ({100*(1-final_n/original_n):.1f}% total reduction)")
+    logger.info(f"Parameters:")
+    logger.info(f"  Min confidence: {args.min_conf}")
+    logger.info(f"  NMS IOU threshold: {args.nms_iou}")
+    logger.info(f"  Coverage threshold: {args.coverage_thresh}")
+    logger.info(f"  Containment tolerance: {args.contain_tol_px}px")
+    logger.info(f"  Score margin: {args.score_margin}")
+    logger.info(f"Output files:")
+    logger.info(f"  GeoPackage: {out_gpkg}")
+    logger.info(f"  CSV: {out_csv}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Merge tile predictions with NMS + nested suppression (prefer outer), export GeoPackage."
+    )
+    parser.add_argument("--pred_csv", required=True, help="predictions_tiles.csv from 06_infer.py")
+    parser.add_argument("--meta", default="data/processed/yolo_dataset_v1/dataset_meta.json", help="Dataset metadata json")
+    parser.add_argument("--out", required=True, help="Output folder, e.g. outputs/predictions/merged/yolo11n_wv3_v1_full")
+    parser.add_argument(
+        "--input_id",
+        default="",
+        help="If meta has multiple inputs, set this to choose the raster (e.g. image1).",
+    )
+
+    parser.add_argument("--min_conf", type=float, default=0.0, help="Drop predictions below this confidence before merging")
+    parser.add_argument("--nms_iou", type=float, default=0.30, help="NMS IoU threshold (global pixel space)")
+    parser.add_argument("--coverage_thresh", type=float, default=0.85, help="Mostly-contained coverage threshold")
+    parser.add_argument("--contain_tol_px", type=float, default=3.0, help="Containment tolerance in pixels")
+    parser.add_argument("--score_margin", type=float, default=0.0, help="Keep inner if it is higher than outer by this margin")
+    args = parser.parse_args()
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.append(str(root))
+
+    from paths import PROJECT_ROOT
+
+    root = PROJECT_ROOT
+    pred_csv = resolve_path(root, args.pred_csv)
+    meta_path = resolve_path(root, args.meta)
+    out_dir = resolve_path(root, args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not pred_csv.exists():
+        raise FileNotFoundError(f"pred_csv not found: {pred_csv}")
+    if not meta_path.exists():
+        raise FileNotFoundError(f"meta json not found: {meta_path}")
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    logger.info("=" * 80)
+    logger.info("YOLO Circle Detection - Merge & NMS")
+    logger.info("=" * 80)
+    logger.info(f"Prediction CSV: {pred_csv}")
+    logger.info(f"Metadata: {meta_path}")
+    logger.info(f"Output directory: {out_dir}")
+
+    try:
+        df = pd.read_csv(pred_csv)
+    except Exception as e:
+        logger.error(f"Failed to read predictions CSV: {e}", exc_info=True)
+        return
+
+    if df.empty:
+        logger.warning("No predictions found in CSV. Nothing to merge.")
+        return
+
+    original_n = len(df)
+    logger.info(f"Loaded {original_n} predictions")
+
+    if "raster" in meta:
+        raster_path = Path(meta["raster"])
+        if not raster_path.is_absolute():
+            raster_path = (root / raster_path).resolve()
+        # Process single raster
+        process_single_image(df, raster_path, out_dir, args, logger, None)
+    else:
+        inputs = meta.get("inputs", [])
+        if not inputs:
+            raise ValueError("Meta json must include 'raster' or 'inputs'.")
+
+        input_id = args.input_id.strip()
+        if not input_id:
+            # Try to infer from tile names: tile_<id>_r####_c####.tif
+            prefixes = set()
+            for name in df["tile"].dropna().astype(str).tolist():
+                if name.startswith("tile_") and "_r" in name:
+                    prefixes.add(name.split("_r")[0].replace("tile_", ""))
+            if len(prefixes) == 1:
+                input_id = prefixes.pop()
+            elif len(prefixes) > 1:
+                # Process all input prefixes
+                logger.info(f"Found {len(prefixes)} input images: {sorted(prefixes)}")
+                logger.info("Processing all images...")
+                for prefix in sorted(prefixes):
+                    logger.info("=" * 80)
+                    logger.info(f"Processing input: {prefix}")
+                    logger.info("=" * 80)
+                    df_subset = df[df["tile"].astype(str).str.startswith(f"tile_{prefix}_")].copy()
+                    if df_subset.empty:
+                        logger.warning(f"No predictions found for {prefix}, skipping.")
+                        continue
+
+                    match = [i for i in inputs if i.get("id") == prefix]
+                    if not match:
+                        logger.warning(f"input_id not found in meta inputs: {prefix}, skipping.")
+                        continue
+                    raster_path = Path(match[0]["raster"])
+                    if not raster_path.is_absolute():
+                        raster_path = (root / raster_path).resolve()
+
+                    process_single_image(df_subset, raster_path, out_dir, args, logger, prefix)
+                return
+            else:
+                raise ValueError("Could not infer input_id from CSV. Use --input_id.")
+
+        df = df[df["tile"].astype(str).str.startswith(f"tile_{input_id}_")].copy()
+        if df.empty:
+            print("No predictions found for input_id. Exiting.")
+            return
+
+        match = [i for i in inputs if i.get("id") == input_id]
+        if not match:
+            raise ValueError(f"input_id not found in meta inputs: {input_id}")
+        raster_path = Path(match[0]["raster"])
+        if not raster_path.is_absolute():
+            raster_path = (root / raster_path).resolve()
+
+        process_single_image(df, raster_path, out_dir, args, logger, input_id)
 
 
 if __name__ == "__main__":

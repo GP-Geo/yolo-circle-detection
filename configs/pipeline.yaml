@@ -1,0 +1,39 @@
+# Main pipeline config (single source of truth)
+run_id: s2_v2_01022026
+
+inputs:
+  - id: image1
+    raster: data/external/active/s2_image1.tif
+    masks_gpkg: data/external/active/s2_image1.gpkg
+    masks_layer: image1_sent2
+  - id: image2
+    raster: data/external/active/s2_image2.tif
+    masks_gpkg: data/external/active/s2_image2.gpkg
+    masks_layer: image2_sent2
+
+bands:
+  # Sentinel-2 order: B04,B03,B02,B08 (R,G,B,NIR)
+  ms: [1, 2, 3, 4]
+  rgb: [4, 3, 2]
+
+# Tiling controls
+# - tile_size_px must be divisible by 32 (32/64/96/128/.../384/512/...)
+# - stride_frac: 0.25 means stride=64px, giving 75% overlap (more training tiles)
+# - If use_ground_size is true, tile_size_m is converted to px and snapped to nearest multiple of 32.
+#   All inputs must resolve to the SAME tile_size_px or the script will error.
+tiling:
+  tile_size_px: 256
+  stride_frac: 0.25
+  use_ground_size: false
+  tile_size_m: 2560
+
+labels:
+  min_area_fraction: 0.25
+  min_bbox_px: 4
+  class_name: circle
+  class_id: 0
+
+split:
+  ratios: {train: 0.7, val: 0.3, test: 0.0}
+  seed: 42
+  block_tiles: 6

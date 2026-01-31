@@ -5,6 +5,8 @@ venv/
 .env
 .ipynb_checkpoints/
 .DS_Store
+.claude/
+.pytest_cache/
 
 # Big data and artifacts
 data/
@@ -17,6 +19,7 @@ reports/
 logs/
 *.pt
 *.onnx
+archive/
 
 # Geo rasters/vectors
 *.tif

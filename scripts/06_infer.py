@@ -14,9 +14,18 @@ from ultralytics import YOLO
 import rasterio
 import cv2
 
+# Add project root to path for imports
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+from utils import setup_logger
+
+logger = setup_logger(__name__)
+
 
 TILE_RE = re.compile(
-    r"tile_r(?P<r>\d+)_c(?P<c>\d+)\.(tif|tiff|png|jpg|jpeg)$",
+    r"tile_(?:(?P<prefix>[^_]+)_)?r(?P<r>\d+)_c(?P<c>\d+)\.(tif|tiff|png|jpg|jpeg)$",
     re.IGNORECASE,
 )
 
@@ -138,14 +147,14 @@ def main() -> None:
             r, c = parse_tile_rc(tile_path.name)
         except Exception as e:
             # Skip anything not matching naming convention
-            print(f"WARNING: skipping file (name pattern): {tile_path.name} ({e})")
+            logger.warning(f"Skipping file (name pattern): {tile_path.name} ({e})")
             continue
 
         try:
             im = read_tile_as_hwc_uint8(tile_path)
         except Exception as e:
             images_failed_read += 1
-            print(f"WARNING: Image Read Error {tile_path} - {e}")
+            logger.warning(f"Image read error {tile_path} - {e}")
             continue
 
         # Global pixel offsets for this tile
@@ -169,7 +178,7 @@ def main() -> None:
             res = pred_list[0]
         except Exception as e:
             images_failed_infer += 1
-            print(f"WARNING: Inference Error {tile_path} - {e}")
+            logger.warning(f"Inference error {tile_path} - {e}")
             continue
 
         images_scored += 1
@@ -206,18 +215,18 @@ def main() -> None:
     out_csv = out_dir / "predictions_tiles.csv"
     df.to_csv(out_csv, index=False)
 
-    print("DONE")
-    print("model:", model_path)
-    print("source:", source_dir)
-    print("meta:", meta_path)
-    print("device:", device)
-    print("tile_size:", tile_size, "stride:", stride)
-    print("tiles_found:", len(tile_files))
-    print("images_scored:", images_scored)
-    print("images_failed_read:", images_failed_read)
-    print("images_failed_infer:", images_failed_infer)
-    print("boxes_saved:", boxes_saved)
-    print("out_csv:", out_csv)
+    logger.info("Inference completed successfully")
+    logger.info(f"Model: {model_path}")
+    logger.info(f"Source: {source_dir}")
+    logger.info(f"Metadata: {meta_path}")
+    logger.info(f"Device: {device}")
+    logger.info(f"Tile size: {tile_size}px, Stride: {stride}px")
+    logger.info(f"Tiles found: {len(tile_files)}")
+    logger.info(f"Images scored: {images_scored}")
+    logger.info(f"Images failed (read): {images_failed_read}")
+    logger.info(f"Images failed (inference): {images_failed_infer}")
+    logger.info(f"Boxes saved: {boxes_saved}")
+    logger.info(f"Output CSV: {out_csv}")
 
 
 if __name__ == "__main__":
