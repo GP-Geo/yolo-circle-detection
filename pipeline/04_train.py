@@ -59,6 +59,41 @@ def validate_dataset(data_yaml: Path, meta_path: Path) -> dict:
 
 def main():
     """Main training function with comprehensive logging and error handling."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Train or fine-tune YOLO circle detection model.")
+    parser.add_argument(
+        "--finetune",
+        default="",
+        help=(
+            "Path to trained weights to fine-tune from (e.g. models/runs/.../best.pt). "
+            "Uses lower LR, fewer epochs, and saves under a versioned run name."
+        ),
+    )
+    parser.add_argument(
+        "--version-suffix",
+        dest="version_suffix",
+        default="",
+        help="Suffix appended to the run name (e.g. 'ft1'). Auto-set to 'ft1','ft2',... when --finetune is used.",
+    )
+    parser.add_argument(
+        "--model",
+        default="yolo11s",
+        help="Base YOLO model variant for full training (e.g. yolo11n, yolo11s, yolo11m). Ignored when --finetune is used.",
+    )
+    parser.add_argument(
+        "--run-name",
+        dest="run_name",
+        default="",
+        help="Override the output run directory name (e.g. yolo11n_s2_v1_15032026). Overrides auto-generated name.",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=0,
+        help="Override number of training epochs (default: 1200 for full training, 300 for fine-tune).",
+    )
+    args = parser.parse_args()
+
     logger.info("=" * 80)
     logger.info("Starting YOLO11 Circle Detection Training")
     logger.info("=" * 80)
@@ -101,57 +136,71 @@ def main():
         device = "cpu"
         logger.warning("No GPU acceleration available, using CPU (training will be slow)")
 
-    # Load base model
-    # Options: yolo11n.pt (nano), yolo11s.pt (small), yolo11m.pt (medium), yolo11l.pt (large)
-    model_name = "yolo11s.pt"  # Using small model for v2 (better performance than nano)
-    weights_path = WEIGHTS_DIR / model_name
+    # Load model — fine-tune from existing weights or train from pretrained backbone
+    finetune_path = Path(args.finetune) if args.finetune else None
+    if finetune_path and not finetune_path.is_absolute():
+        finetune_path = ROOT / finetune_path
 
-    # Ensure weights directory exists
     WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    if weights_path.exists():
-        logger.info(f"Loading base model from: {weights_path}")
-        try:
-            model = YOLO(str(weights_path))
-            logger.info("Model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}", exc_info=True)
+    if finetune_path:
+        if not finetune_path.exists():
+            logger.error(f"Fine-tune weights not found: {finetune_path}")
             return 1
+        logger.info(f"Fine-tuning from: {finetune_path}")
+        model = YOLO(str(finetune_path))
+        model_size = "s"  # infer from filename if needed
+        for part in finetune_path.stem.split("_"):
+            if part.startswith("yolo11"):
+                model_size = part.replace("yolo11", "")
+        is_finetune = True
     else:
-        # Auto-download weights from ultralytics
-        logger.info("Base model weights not found locally")
-        logger.info(f"Downloading {model_name} weights from Ultralytics...")
-        try:
-            model = YOLO(model_name)  # This will auto-download
-            logger.info("Weights downloaded successfully")
-            # Save to local weights directory for future use
-            logger.info(f"Saving weights to: {weights_path}")
+        base_model = args.model if args.model.endswith(".pt") else args.model + ".pt"
+        model_size = base_model.replace(".pt", "").replace("yolo11", "")
+        model_name = base_model
+        weights_path = WEIGHTS_DIR / model_name
+        if weights_path.exists():
+            logger.info(f"Loading base model from: {weights_path}")
+            model = YOLO(str(weights_path))
+        else:
+            logger.info(f"Downloading {model_name} from Ultralytics...")
+            model = YOLO(model_name)
             model.save(str(weights_path))
-        except Exception as e:
-            logger.error(f"Failed to download model: {e}", exc_info=True)
-            logger.error("Please check your internet connection")
-            return 1
+        model_size = model_name.replace(".pt", "").replace("yolo11", "")
+        is_finetune = False
 
-    # Training configuration
-    model_size = model_name.replace(".pt", "").replace("yolo11", "")  # Extract: n, s, m, l
-    output_dir = RUNS_DIR / "training_runs" / f"yolo11{model_size}_{run_id}"
+    logger.info("Model loaded successfully")
+
+    # Determine run name and suffix
+    if args.run_name:
+        run_name = args.run_name
+    else:
+        version_suffix = args.version_suffix
+        if not version_suffix and is_finetune:
+            # Auto-increment ft suffix based on existing run dirs
+            existing = list((RUNS_DIR / "training_runs").glob(f"yolo11{model_size}_{run_id}_ft*"))
+            version_suffix = f"ft{len(existing) + 1}"
+        run_name = f"yolo11{model_size}_{run_id}" + (f"_{version_suffix}" if version_suffix else "")
+    output_dir = RUNS_DIR / "training_runs" / run_name
     logger.info(f"Output directory: {output_dir}")
 
+    # Training configuration — fine-tune uses lower LR and fewer epochs
     training_params = {
         'data': str(data_yaml),
         'imgsz': tile_size_px,
-        'epochs': 1200,
-        'patience': 200,
+        'epochs': args.epochs if args.epochs > 0 else (300 if is_finetune else 1200),
+        'patience': min(50, args.epochs // 3) if args.epochs > 0 else (50 if is_finetune else 200),
         'batch': 8,
         'device': device,
         'project': str(RUNS_DIR / "training_runs"),
-        'name': f"yolo11{model_size}_{run_id}",
+        'name': run_name,
         'pretrained': True,
-        'conf': 0.1,
+        'optimizer': 'AdamW',        # explicit — prevents auto overriding lr0
+        'conf': 0.35,                # pre-filters boxes before NMS during val
         'iou': 0.50,
         'augment': True,
         'plots': True,
-        'cache': True,
+        'cache': 'disk',             # deterministic; was True (RAM)
         'workers': 0,
         'degrees': 10,
         'translate': 0.05,
@@ -164,14 +213,16 @@ def main():
         'hsv_h': 0.0,
         'hsv_s': 0.0,
         'hsv_v': 0.0,
-        'lr0': 0.003,
+        'lr0': 0.0003 if is_finetune else 0.003,  # 10x lower for fine-tuning
         'cos_lr': True,
     }
 
     logger.info("Training parameters:")
+    logger.info(f"  Mode: {'Fine-tune' if is_finetune else 'Full training'}")
     logger.info(f"  Image size: {tile_size_px}px")
     logger.info(f"  Epochs: {training_params['epochs']} (patience: {training_params['patience']})")
     logger.info(f"  Batch size: {training_params['batch']}")
+    logger.info(f"  Learning rate: {training_params['lr0']}")
     logger.info(f"  Device: {device}")
     logger.info(f"  Data augmentation: enabled")
     logger.info(f"  HSV augmentation: disabled (multispectral data)")
@@ -186,8 +237,8 @@ def main():
         logger.info("=" * 80)
         return 0
     except KeyboardInterrupt:
-        logger.warning("Training interrupted by user (Ctrl+C)")
-        return 130
+        logger.warning("Training interrupted by user (Ctrl+C) — Ultralytics will save weights and run final validation")
+        raise
     except Exception as e:
         logger.error("Training failed with error:", exc_info=True)
         return 1

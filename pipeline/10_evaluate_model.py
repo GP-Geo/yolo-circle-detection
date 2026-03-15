@@ -9,7 +9,7 @@ This script computes detailed performance metrics including:
 - Per-class performance breakdown
 
 Usage:
-    python scripts/10_evaluate_model.py --model models/runs/training_runs/yolo11n_<run_id>/weights/best.pt
+    python pipeline/10_evaluate_model.py --model models/runs/training_runs/yolo11n_<run_id>/weights/best.pt
 """
 
 from __future__ import annotations

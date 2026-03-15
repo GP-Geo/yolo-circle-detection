@@ -1,4 +1,4 @@
-# scripts/01_build_yolo_dataset.py
+# pipeline/01_build_yolo_dataset.py
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,4 +1,4 @@
-# scripts/05_make_inference_tiles.py
+# pipeline/05_make_inference_tiles.py
 from __future__ import annotations
 
 from pathlib import Path
@@ -202,6 +202,12 @@ def main() -> None:
     out_ms.mkdir(parents=True, exist_ok=True)
     out_rgb.mkdir(parents=True, exist_ok=True)
 
+    try:
+        from tqdm import tqdm as _tqdm
+        _tqdm_available = True
+    except ImportError:
+        _tqdm_available = False
+
     tile_size_px = None
     stride_px = None
     inputs_meta = []
@@ -240,8 +246,16 @@ def main() -> None:
 
             written = 0
             skipped_all_nodata = 0
+            total_tiles = n_rows * n_cols
+            logger.info(f"  {input_id}: {n_rows}×{n_cols} = {total_tiles} tiles")
 
-            for r in range(n_rows):
+            row_iter = (
+                _tqdm(range(n_rows), desc=f"Tiling {input_id}", unit="row", leave=False)
+                if _tqdm_available
+                else range(n_rows)
+            )
+
+            for r in row_iter:
                 top = r * stride_px
                 for c in range(n_cols):
                     left = c * stride_px

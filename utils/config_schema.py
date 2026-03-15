@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -64,6 +64,35 @@ class SplitConfig(BaseModel):
         return self
 
 
+class HitlConfig(BaseModel):
+    """Configuration for human-in-the-loop iterative refinement."""
+    corrections_dir: str = Field(
+        default="data/corrections/",
+        description="Directory where corrected GeoPackages are stored after QGIS review",
+    )
+    merge_strategy: str = Field(
+        default="replace",
+        description="How to handle duplicate tiles: 'replace' overwrites existing tiles",
+    )
+
+
+class IterationEntry(BaseModel):
+    """Record of a single HITL iteration round."""
+    round: int = Field(..., description="Iteration round number")
+    model: Optional[str] = Field(default=None, description="Path to model weights used")
+    corrections_gpkg: Optional[str] = Field(default=None, description="Path to corrected GeoPackage")
+    date: Optional[str] = Field(default=None, description="Date of this iteration (YYYY-MM-DD)")
+
+
+class IterationsConfig(BaseModel):
+    """Tracks the current iteration and history of HITL rounds."""
+    current: int = Field(default=1, ge=1, description="Current iteration round number")
+    history: list[IterationEntry] = Field(
+        default_factory=list,
+        description="List of completed iteration rounds",
+    )
+
+
 class PipelineConfig(BaseModel):
     """Complete pipeline configuration."""
     run_id: str = Field(..., description="Unique run identifier")
@@ -72,6 +101,10 @@ class PipelineConfig(BaseModel):
     tiling: TilingConfig = Field(default_factory=TilingConfig, description="Tiling configuration")
     labels: LabelsConfig = Field(default_factory=LabelsConfig, description="Label filtering")
     split: SplitConfig = Field(default_factory=SplitConfig, description="Dataset split")
+    hitl: HitlConfig = Field(default_factory=HitlConfig, description="HITL refinement settings")
+    iterations: IterationsConfig = Field(
+        default_factory=IterationsConfig, description="Iteration history"
+    )
 
 
 def validate_config(cfg: dict[str, Any]) -> PipelineConfig:

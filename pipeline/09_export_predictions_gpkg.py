@@ -1,4 +1,4 @@
-# scripts/09_export_predictions_gpkg.py
+# pipeline/09_export_predictions_gpkg.py
 from __future__ import annotations
 
 import argparse

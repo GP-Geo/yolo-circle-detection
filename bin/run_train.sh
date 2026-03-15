@@ -6,4 +6,4 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "Starting YOLO training with MPS fallback enabled..."
-PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/04_train.py
+PYTORCH_ENABLE_MPS_FALLBACK=1 python pipeline/04_train.py

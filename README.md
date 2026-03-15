@@ -495,8 +495,8 @@ Computes comprehensive evaluation metrics for the trained model.
 
 ```bash
 python scripts/10_evaluate_model.py \
-  --model models/runs/training_runs/yolo11n_s2_v1_31012026/weights/best.pt \
-  --conf_threshold 0.25 \
+  --model models/runs/training_runs/yolo11s_s2_v2_01022026/weights/best.pt \
+  --conf_threshold 0.2 \
   --iou_threshold 0.5 \
   --split val
 ```
@@ -565,7 +565,7 @@ python scripts/06_infer.py \
 # 7. Merge predictions with NMS
 python scripts/07_merge_nms.py \
   --pred_csv outputs/predictions/tiles/predictions_tiles.csv \
-  --meta data/processed/yolo_dataset_s2_v1_31012026/dataset_meta.json \
+  --meta data/processed/yolo_dataset_s2_v2_01022026/dataset_meta.json \
   --out outputs/predictions/merged/full
 
 # 8. Export to GeoPackage
@@ -582,7 +582,7 @@ python scripts/08_render_predictions.py \
   --pred outputs/predictions/tiles/predictions_tiles.csv \
   --rgb_dir outputs/inference/tiles_full/images_rgb \
   --out outputs/overlays/tiles \
-  --stride 192
+  --stride 64
 ```
 
 ## Model Naming Convention
@@ -687,6 +687,117 @@ Key parameters to tune in `scripts/04_train.py`:
 - Patience: `'patience': 150` (early stopping)
 - Confidence threshold: `'conf': 0.3`
 - IOU threshold: `'iou': 0.50`
+
+## HITL Iterative Refinement Workflow
+
+The pipeline supports a human-in-the-loop (HITL) workflow for iteratively improving detection quality on large tiles (~100×50 km Sentinel-2 scenes). This is especially useful when ground truth labels are sparse — you bootstrap with a rough model, review its predictions in QGIS, correct them, and retrain.
+
+### Workflow Overview
+
+```
+1. Train initial model    python scripts/04_train.py
+2. Run inference          python scripts/12_run_iteration.py --model best.pt --raster large_tile.tif
+3. Review in QGIS         Open output GeoPackage + raster. Delete FPs, add FNs, adjust bboxes. Save.
+4. Ingest corrections     python scripts/11_ingest_corrections.py --corrections_gpkg corrected.gpkg --raster large_tile.tif
+5. Retrain                python scripts/04_train.py
+6. Repeat from step 2 until satisfied
+```
+
+### Step-by-step Instructions
+
+#### Step 1 — Initial training
+
+Build the base dataset and train a first model:
+
+```bash
+python scripts/01_build_yolo_dataset.py
+python scripts/04_train.py
+```
+
+Note the path to `best.pt` from the training output (e.g. `models/runs/training_runs/yolo11s_s2_v2/weights/best.pt`).
+
+#### Step 2 — Run an inference iteration
+
+```bash
+python scripts/12_run_iteration.py \
+    --model  models/runs/training_runs/yolo11s_s2_v2/weights/best.pt \
+    --raster data/external/active/s2_large_tile.tif \
+    --output-dir outputs/iterations/round1 \
+    --input-id large_tile
+```
+
+This chains scripts 05 → 06 → 07 → 09 and writes a GeoPackage to
+`outputs/iterations/round1/gpkg/detections_merged.gpkg`.
+
+After it completes, the script prints detailed next-step instructions.
+
+#### Step 3 — Review detections in QGIS
+
+1. Open QGIS and load the raster and the output GeoPackage as layers.
+2. Review each detection polygon:
+   - **Delete false positives**: select the feature → `Delete` key
+   - **Add missed circles**: use the polygon digitize tool to draw new bboxes
+   - **Adjust inaccurate bboxes**: node editing tool
+3. Save the corrected layer to a new GeoPackage, e.g.:
+   `data/corrections/round1_corrected.gpkg`
+
+#### Step 4 — Ingest corrections
+
+```bash
+python scripts/11_ingest_corrections.py \
+    --corrections_gpkg data/corrections/round1_corrected.gpkg \
+    --raster data/external/active/s2_large_tile.tif \
+    --round_id round1
+```
+
+This tiles the corrected GeoPackage to match the existing dataset grid, writes
+new YOLO `.tif` + `.txt` pairs, and replaces any tiles already present
+(`merge_strategy: replace`). A `corrections_manifest.json` is written to the
+dataset directory for traceability.
+
+#### Step 5 — Retrain and repeat
+
+```bash
+python scripts/04_train.py
+# Then run 12_run_iteration.py again with the new best.pt
+```
+
+### Configuration
+
+HITL settings live in `configs/pipeline.yaml`:
+
+```yaml
+hitl:
+  corrections_dir: data/corrections/   # where corrected GeoPackages are stored
+  merge_strategy: replace              # replace duplicate tiles with corrections
+
+iterations:
+  current: 1
+  history:
+    - round: 1
+      model: models/runs/.../best.pt
+      corrections_gpkg: data/corrections/round1_corrected.gpkg
+      date: 2026-03-14
+```
+
+Update `iterations.history` manually after each round to keep a record.
+
+### Large-tile support
+
+Scripts 05 and 06 use rasterio windowed reads — the full raster is never loaded
+into memory at once. A 10,000×5,000 px tile (100×50 km at 10 m resolution)
+produces ~11,400 tiles at the default stride; all stages handle this via
+streaming reads and chunked processing. `tqdm` progress bars are shown for
+long-running loops.
+
+### New scripts
+
+| Script | Purpose |
+|--------|---------|
+| `11_ingest_corrections.py` | HITL bridge: converts corrected GeoPackage → YOLO tiles + labels |
+| `12_run_iteration.py` | Orchestrator: chains 05→06→07→09 for one iteration cycle |
+
+---
 
 ## Recent Improvements
 

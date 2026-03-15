@@ -1,5 +1,5 @@
 # Main pipeline config (single source of truth)
-run_id: s2_v2_01022026
+run_id: s2_v2_14032026
 
 inputs:
   - id: image1
@@ -10,6 +10,10 @@ inputs:
     raster: data/external/active/s2_image2.tif
     masks_gpkg: data/external/active/s2_image2.gpkg
     masks_layer: image2_sent2
+  - id: aoi_test
+    raster: data/raw/Sent_10m_smaller_AOI.tif
+  - id: aoi_new
+    raster: data/raw/Sent_10m_NEWsmallAOI.TIF
 
 bands:
   # Sentinel-2 order: B04,B03,B02,B08 (R,G,B,NIR)
@@ -37,3 +41,17 @@ split:
   ratios: {train: 0.7, val: 0.3, test: 0.0}
   seed: 42
   block_tiles: 6
+
+# HITL iterative refinement settings
+hitl:
+  corrections_dir: data/corrections/    # where corrected GeoPackages go after QGIS review
+  merge_strategy: replace               # replace existing tiles with corrected ones
+
+# Iteration history (updated automatically by 12_run_iteration.py)
+iterations:
+  current: 1
+  history:
+    - round: 1
+      model: null                       # set to best.pt path after first training run
+      corrections_gpkg: null
+      date: 2026-03-14

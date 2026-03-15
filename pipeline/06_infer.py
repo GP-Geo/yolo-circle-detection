@@ -25,7 +25,7 @@ logger = setup_logger(__name__)
 
 
 TILE_RE = re.compile(
-    r"tile_(?:(?P<prefix>[^_]+)_)?r(?P<r>\d+)_c(?P<c>\d+)\.(tif|tiff|png|jpg|jpeg)$",
+    r"tile_(?P<prefix>.+_)?r(?P<r>\d+)_c(?P<c>\d+)\.(tif|tiff|png|jpg|jpeg)$",
     re.IGNORECASE,
 )
 

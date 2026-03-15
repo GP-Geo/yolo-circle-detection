@@ -3,13 +3,13 @@ Inspect GeoPackage files and list their layers, geometry types, and basic statis
 
 Usage:
     # Inspect specific GeoPackage files
-    python scripts/00_inspect_gpkg.py data/external/active/s2_image1.gpkg data/external/active/s2_image2.gpkg
+    python pipeline/00_inspect_gpkg.py data/external/active/s2_image1.gpkg data/external/active/s2_image2.gpkg
 
     # Inspect all GPKGs in active directory (default)
-    python scripts/00_inspect_gpkg.py
+    python pipeline/00_inspect_gpkg.py
 
     # Inspect all GPKGs in a specific directory
-    python scripts/00_inspect_gpkg.py data/raw/vectors/
+    python pipeline/00_inspect_gpkg.py data/raw/vectors/
 """
 
 from pathlib import Path
@@ -125,7 +125,7 @@ def main():
             gpkg_files = list(active_dir.glob("*.gpkg"))
         if not gpkg_files:
             print(f"No GeoPackage files found in {active_dir}")
-            print("Usage: python scripts/00_inspect_gpkg.py <path_to_gpkg> [<path_to_gpkg2> ...]")
+            print("Usage: python pipeline/00_inspect_gpkg.py <path_to_gpkg> [<path_to_gpkg2> ...]")
             return 1
     else:
         # User provided paths
